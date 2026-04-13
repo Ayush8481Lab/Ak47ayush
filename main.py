@@ -1,7 +1,5 @@
 from fastapi import FastAPI
 import requests
-import json
-import urllib.parse
 
 app = FastAPI()
 
@@ -12,44 +10,41 @@ def home():
 @app.get("/search")
 def search_spotify(q: str, token: str, limit: int = 10):
     try:
-        # 1. Pathfinder requires GraphQL variables
-        variables = {
-            "searchTerm": q,
-            "offset": 0,
-            "limit": limit,
-            "numberOfTopResults": 5,
-            "includeAudiobooks": False
-        }
-        
-        # 2. Pathfinder requires the Persisted Query Hash (Spotify's web search signature)
-        extensions = {
-            "persistedQuery": {
-                "version": 1,
-                # Note: This is a recent hash. If Spotify updates their web app and you get a "PersistedQueryNotFound" error,
-                # just go to your Network log, click the "query?operationName=searchDesktop" request, and copy the new sha256Hash from the URL!
-                "sha256Hash": "1301151626db4eaeecea0b1e4c935eeae304fcd2b58e6e584988dc8241076b32"
+        # 1. Use the clean base URL (No more messy URL variables!)
+        url = "https://api-partner.spotify.com/pathfinder/v2/query"
+
+        # 2. Build the GraphQL Payload
+        payload = {
+            "operationName": "searchDesktop",
+            "variables": {
+                "searchTerm": q,
+                "offset": 0,
+                "limit": limit,
+                "numberOfTopResults": 5,
+                "includeAudiobooks": False
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "version": 1,
+                    # This is the exact hash Spotify uses for web-player searches
+                    "sha256Hash": "1301151626db4eaeecea0b1e4c935eeae304fcd2b58e6e584988dc8241076b32"
+                }
             }
         }
 
-        # 3. Build the complex Pathfinder URL
-        url = (
-            f"https://api-partner.spotify.com/pathfinder/v2/query"
-            f"?operationName=searchDesktop"
-            f"&variables={urllib.parse.quote(json.dumps(variables))}"
-            f"&extensions={urllib.parse.quote(json.dumps(extensions))}"
-        )
-
-        # 4. CRITICAL: Inject strict Web Player headers to bypass the 429 Bot Protection
+        # 3. CRITICAL: Inject strict Web Player headers
         headers = {
             "Authorization": f"Bearer {token}",
             "App-Platform": "WebPlayer",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Origin": "https://open.spotify.com",
-            "Referer": "https://open.spotify.com/"
+            "Referer": "https://open.spotify.com/",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
         }
         
-        # 5. Request data from Spotify Partner API (Bypasses CORS & 429!)
-        response = requests.get(url, headers=headers)
+        # 4. Use requests.post() instead of GET to bypass the 405 error!
+        response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code != 200:
             return {
@@ -60,11 +55,10 @@ def search_spotify(q: str, token: str, limit: int = 10):
             
         data = response.json()
         
-        # 6. Extract data from Pathfinder's deeply nested GraphQL tree
+        # 5. Extract data from Pathfinder's deeply nested GraphQL tree
         results =[]
         
         try:
-            # Navigate the GraphQL tree structure
             items = data.get("data", {}).get("searchV2", {}).get("tracksV2", {}).get("items",[])
             
             for item in items:
@@ -72,15 +66,12 @@ def search_spotify(q: str, token: str, limit: int = 10):
                 if not track:
                     continue
                     
-                # Extract High-Res Cover Art
-                images = track.get("albumOfTrack", {}).get("coverArt", {}).get("sources",[])
+                images = track.get("albumOfTrack", {}).get("coverArt", {}).get("sources", [])
                 image_url = images[0]["url"] if images else None
                 
-                # Extract Artist Name
-                artists = track.get("artists", {}).get("items", [])
+                artists = track.get("artists", {}).get("items",[])
                 artist_name = artists[0].get("profile", {}).get("name") if artists else "Unknown"
 
-                # Extract Spotify URL
                 track_uri = track.get("uri", "")
                 track_id = track_uri.split(":")[-1] if track_uri else ""
                 
