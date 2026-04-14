@@ -27,7 +27,7 @@ def search_spotify(q: str, token: str, limit: int = 10):
                 "persistedQuery": {
                     "version": 1,
                     # This is the exact hash Spotify uses for web-player searches
-                    "sha256Hash": "1301151626db4eaeecea0b1e4c935eeae304fcd2b58e6e584988dc8241076b32"
+                    "sha256Hash": "a980e31c2fbee43f61fd4708bb69d4563b2928ce35087a945ee9ce31bedd1c08"
                 }
             }
         }
