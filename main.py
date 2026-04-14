@@ -4,11 +4,12 @@ import requests
 
 app = FastAPI()
 
-# 1. CORS MIDDLEWARE: Allows any app or website to request your API
+# 1. FIXED CORS MIDDLEWARE
+# allow_credentials MUST be False when allow_origins is set to "*" (All Domains)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # <--- This fixes the "specific domains" issue!
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -17,12 +18,12 @@ app.add_middleware(
 def home():
     return {"message": "My Custom Pathfinder Spotify API is running perfectly!"}
 
-# Added 'tp' parameter here (defaults to None)
 @app.get("/search")
 def search_spotify(q: str, token: str, limit: int = 10, tp: str = None):
     try:
         url = "https://api-partner.spotify.com/pathfinder/v2/query"
 
+        # The exact payload we extracted
         payload = {
             "variables": {
                 "searchTerm": "Drake", 
