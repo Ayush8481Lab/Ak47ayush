@@ -10,27 +10,35 @@ def home():
 @app.get("/search")
 def search_spotify(q: str, token: str, limit: int = 10):
     try:
-        # 1. Use the clean base URL (No more messy URL variables!)
         url = "https://api-partner.spotify.com/pathfinder/v2/query"
 
-        # 2. Build the GraphQL Payload
+        # 1. THE PERFECT PAYLOAD: 
+        # This is the exact lock and key you just extracted!
         payload = {
-            "operationName": "searchDesktop",
             "variables": {
-                "searchTerm": q,
+                "searchTerm": "Drake", # This will be replaced dynamically
                 "offset": 0,
-                "limit": limit,
+                "limit": 10,           # This will be replaced dynamically
                 "numberOfTopResults": 5,
-                "includeAudiobooks": False
+                "includeAudiobooks": True,
+                "includeArtistHasConcertsField": False,
+                "includePreReleases": True,
+                "includeAuthors": False,
+                "includeEpisodeContentRatingsV2": False
             },
+            "operationName": "searchDesktop",
             "extensions": {
                 "persistedQuery": {
                     "version": 1,
-                    # This is the exact hash Spotify uses for web-player searches
-                    "sha256Hash": "a980e31c2fbee43f61fd4708bb69d4563b2928ce35087a945ee9ce31bedd1c08"
+                    "sha256Hash": "21b3fe49546912ba782db5c47e9ef5a7dbd20329520ba0c7d0fcfadee671d24e"
                 }
             }
         }
+
+        # 2. DYNAMIC INJECTION:
+        # We silently swap "Drake" with whatever the user actually searched for (q).
+        payload["variables"]["searchTerm"] = q
+        payload["variables"]["limit"] = limit
 
         # 3. CRITICAL: Inject strict Web Player headers
         headers = {
@@ -43,7 +51,7 @@ def search_spotify(q: str, token: str, limit: int = 10):
             "Content-Type": "application/json"
         }
         
-        # 4. Use requests.post() instead of GET to bypass the 405 error!
+        # 4. Request the data!
         response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code != 200:
@@ -55,9 +63,8 @@ def search_spotify(q: str, token: str, limit: int = 10):
             
         data = response.json()
         
-        # 5. Extract data from Pathfinder's deeply nested GraphQL tree
+        # 5. Extract the clean data for your mobile app
         results =[]
-        
         try:
             items = data.get("data", {}).get("searchV2", {}).get("tracksV2", {}).get("items",[])
             
