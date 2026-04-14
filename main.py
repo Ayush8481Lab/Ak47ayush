@@ -1,24 +1,33 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 
 app = FastAPI()
+
+# 1. CORS MIDDLEWARE: Allows any app or website to request your API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def home():
     return {"message": "My Custom Pathfinder Spotify API is running perfectly!"}
 
+# Added 'tp' parameter here (defaults to None)
 @app.get("/search")
-def search_spotify(q: str, token: str, limit: int = 10):
+def search_spotify(q: str, token: str, limit: int = 10, tp: str = None):
     try:
         url = "https://api-partner.spotify.com/pathfinder/v2/query"
 
-        # 1. THE PERFECT PAYLOAD: 
-        # This is the exact lock and key you just extracted!
         payload = {
             "variables": {
-                "searchTerm": "Drake", # This will be replaced dynamically
+                "searchTerm": "Drake", 
                 "offset": 0,
-                "limit": 10,           # This will be replaced dynamically
+                "limit": 10,           
                 "numberOfTopResults": 5,
                 "includeAudiobooks": True,
                 "includeArtistHasConcertsField": False,
@@ -35,12 +44,11 @@ def search_spotify(q: str, token: str, limit: int = 10):
             }
         }
 
-        # 2. DYNAMIC INJECTION:
-        # We silently swap "Drake" with whatever the user actually searched for (q).
+        # DYNAMIC INJECTION
         payload["variables"]["searchTerm"] = q
         payload["variables"]["limit"] = limit
 
-        # 3. CRITICAL: Inject strict Web Player headers
+        # CRITICAL: Web Player headers
         headers = {
             "Authorization": f"Bearer {token}",
             "App-Platform": "WebPlayer",
@@ -51,7 +59,7 @@ def search_spotify(q: str, token: str, limit: int = 10):
             "Content-Type": "application/json"
         }
         
-        # 4. Request the data!
+        # Request the data!
         response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code != 200:
@@ -63,7 +71,11 @@ def search_spotify(q: str, token: str, limit: int = 10):
             
         data = response.json()
         
-        # 5. Extract the clean data for your mobile app
+        # 2. RAW DATA FEATURE: If the URL has &tp=or, return the EXACT original Spotify response
+        if tp == "or":
+            return data
+        
+        # 3. Clean Data Extraction (Default)
         results =[]
         try:
             items = data.get("data", {}).get("searchV2", {}).get("tracksV2", {}).get("items",[])
@@ -73,18 +85,20 @@ def search_spotify(q: str, token: str, limit: int = 10):
                 if not track:
                     continue
                     
-                images = track.get("albumOfTrack", {}).get("coverArt", {}).get("sources", [])
+                images = track.get("albumOfTrack", {}).get("coverArt", {}).get("sources",[])
                 image_url = images[0]["url"] if images else None
                 
+                # FIX: Extract ALL artists and separate them with a comma
                 artists = track.get("artists", {}).get("items",[])
-                artist_name = artists[0].get("profile", {}).get("name") if artists else "Unknown"
+                artist_names =[a.get("profile", {}).get("name") for a in artists if a.get("profile", {}).get("name")]
+                artist_name_string = ", ".join(artist_names) if artist_names else "Unknown"
 
                 track_uri = track.get("uri", "")
                 track_id = track_uri.split(":")[-1] if track_uri else ""
                 
                 results.append({
                     "song_name": track.get("name", "Unknown"),
-                    "artist": artist_name,
+                    "artist": artist_name_string,  # Now returns "Artist 1, Artist 2"
                     "spotify_url": f"https://open.spotify.com/track/{track_id}" if track_id else None,
                     "image": image_url
                 })
