@@ -51,7 +51,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
                 "searchTerm": q, # Dynamically injected right here
                 "offset": calculated_offset, # Dynamically injected here based on page & limit
                 "limit": limit,  # Dynamically injected right here         
-                "numberOfTopResults": 0,
+                "numberOfTopResults": 10,
                 "includeAudiobooks": True,
                 "includeArtistHasConcertsField": False,
                 "includePreReleases": True,
