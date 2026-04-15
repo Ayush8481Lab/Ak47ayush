@@ -30,18 +30,13 @@ def home():
     return {"message": "My Ultra-Fast Pathfinder API is running!"}
 
 # LATENCY FIX 2: Added "async def" and the "Response" object for caching
-# ADDED: "page" parameter (defaults to 1)
+# ADDED: "offset" parameter (defaults to 0) so you can manually pass &offset=...
 @app.get("/search")
-async def search_spotify(q: str, token: str, response: Response, limit: int = 10, page: int = 1, tp: str = None):
+async def search_spotify(q: str, token: str, response: Response, limit: int = 10, offset: int = 0, tp: str = None):
     # LATENCY FIX 3: EDGE CACHING
     # Vercel will cache the result for 60 seconds. If users search the same song, 
     # Vercel bypasses Python entirely and returns the data in ~1 millisecond.
     response.headers["Cache-Control"] = "public, s-maxage=60, stale-while-revalidate=300"
-
-    # DYNAMIC OFFSET CALCULATION
-    # Ensure page is at least 1 so we never get a negative offset
-    safe_page = max(1, page)
-    calculated_offset = (safe_page - 1) * limit
 
     try:
         url = "https://api-partner.spotify.com/pathfinder/v2/query"
@@ -49,9 +44,9 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         payload = {
             "variables": {
                 "searchTerm": q, # Dynamically injected right here
-                "offset": calculated_offset, # Dynamically injected here based on page & limit
+                "offset": offset, # Dynamically injected right here from your URL parameter
                 "limit": limit,  # Dynamically injected right here         
-                "numberOfTopResults": 10,
+                "numberOfTopResults": 5,
                 "includeAudiobooks": True,
                 "includeArtistHasConcertsField": False,
                 "includePreReleases": True,
@@ -127,8 +122,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         except Exception as parse_error:
             return {"error": "Failed to parse GraphQL structure.", "details": str(parse_error), "raw_data": data}
             
-        # Optional: I included "current_page" in the final return so your frontend knows what page it is on
-        return {"search_query": q, "current_page": safe_page, "results": results}
+        return {"search_query": q, "results": results}
         
     except Exception as e:
         response.headers["Cache-Control"] = "no-store"
