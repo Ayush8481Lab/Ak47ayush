@@ -43,7 +43,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         payload = {
             "variables": {
                 "searchTerm": q, # Dynamically injected right here
-                "offset": 0,
+                "offset": 5,
                 "limit": limit,  # Dynamically injected right here         
                 "numberOfTopResults": 5,
                 "includeAudiobooks": True,
