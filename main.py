@@ -57,7 +57,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
             "extensions": {
                 "persistedQuery": {
                     "version": 1,
-                    "sha256Hash": "21b3fe49546912ba782db5c47e9ef5a7dbd20329520ba0c7d0fcfadee671d24e"
+                    "sha256Hash": "658888f28f397bca282c3b31ab745708fbf39b8b7780baefa57d95a0973ad5a9"
                 }
             }
         }
