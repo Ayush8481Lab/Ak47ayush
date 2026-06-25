@@ -62,7 +62,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         headers = {
             "Authorization": f"Bearer {token}",
             "App-Platform": "WebPlayer",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Origin": "https://open.spotify.com",
             "Referer": "https://open.spotify.com/",
             "Accept": "application/json",
@@ -113,7 +113,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         return {"error": "Server error", "details": str(e)}
 
 # =====================================================================
-# INTERNAL HELPER FUNCTIONS
+# INTERNAL HELPER FUNCTIONS (WAF / 403 BYPASS ADDED HERE)
 # =====================================================================
 def _normalize_uri(id_or_uri: str, prefix: str) -> str:
     """Lets users pass either raw IDs or full URIs"""
@@ -126,13 +126,19 @@ async def _query_pathfinder(op_name: str, sha_hash: str, variables: dict, token:
         "operationName": op_name,
         "extensions": {"persistedQuery": {"version": 1, "sha256Hash": sha_hash}}
     }
+    
+    # 🚨 ANTI-BOT HEADERS ADDED BACK TO PREVENT 403 FORBIDDEN 🚨
     headers = {
         "Authorization": f"Bearer {token}",
         "App-Platform": "WebPlayer",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Origin": "https://open.spotify.com",
+        "Referer": "https://open.spotify.com/",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip, deflate, br"
     }
+    
     try:
         res = await client.post(url, json=payload, headers=headers)
         if res.status_code != 200:
@@ -163,14 +169,19 @@ async def get_track_enriched(id: str, token: str, response: Response):
     radio_contents = None
     
     url = f"https://spclient.wg.spotify.com/inspiredby-mix/v2/seed_to_playlist/spotify:track:{clean_id}?response-format=json"
-    headers = {
+    
+    # Added full anti-bot headers here just to be perfectly safe
+    radio_headers = {
         "Authorization": f"Bearer {token}",
         "App-Platform": "WebPlayer",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Origin": "https://open.spotify.com",
+        "Referer": "https://open.spotify.com/",
         "Accept": "application/json",
     }
     
     try:
-        res_radio = await client.get(url, headers=headers)
+        res_radio = await client.get(url, headers=radio_headers)
         if res_radio.status_code == 200:
             media_items = res_radio.json().get("mediaItems", [])
             radio_uri = media_items[0].get("uri", "") if media_items else None
@@ -234,13 +245,22 @@ async def get_track_artists(id: str, token: str, response: Response):
 async def get_standalone_radio_id(id: str, token: str, response: Response):
     clean_id = id.split(":")[-1]
     url = f"https://spclient.wg.spotify.com/inspiredby-mix/v2/seed_to_playlist/spotify:track:{clean_id}?response-format=json"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "App-Platform": "WebPlayer",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Origin": "https://open.spotify.com",
+        "Referer": "https://open.spotify.com/"
+    }
+    
     try:
-        res = await client.get(url, headers={"Authorization": f"Bearer {token}", "App-Platform": "WebPlayer"})
+        res = await client.get(url, headers=headers)
         if res.status_code == 200:
             media = res.json().get("mediaItems", [])
             uri = media[0].get("uri", "") if media else None
             return {"radio_id": uri.split(":")[-1] if uri else None, "uri": uri}
-        return {"error": "Failed"}
+        return {"error": "Failed", "status": res.status_code, "details": res.text}
     except Exception as e:
         return {"error": str(e)}
 
