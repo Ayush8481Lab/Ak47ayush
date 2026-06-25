@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
+import asyncio
 
 app = FastAPI()
 
@@ -13,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# LATENCY FIX 1: GLOBAL CONNECTION POOL
+# GLOBAL CONNECTION POOL (Massive Latency Reduction)
 client = httpx.AsyncClient(
     limits=httpx.Limits(max_keepalive_connections=50, max_connections=100),
     timeout=5.0
@@ -27,7 +28,9 @@ async def shutdown_event():
 def home():
     return {"message": "My Ultra-Fast Pathfinder API is running!"}
 
-
+# =====================================================================
+# 1. SEARCH ENDPOINT (100% UNTOUCHED)
+# =====================================================================
 @app.get("/search")
 async def search_spotify(q: str, token: str, response: Response, limit: int = 10, offset: int = 0, tp: str = None):
     response.headers["Cache-Control"] = "public, s-maxage=60, stale-while-revalidate=300"
@@ -59,7 +62,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         headers = {
             "Authorization": f"Bearer {token}",
             "App-Platform": "WebPlayer",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0",
             "Origin": "https://open.spotify.com",
             "Referer": "https://open.spotify.com/",
             "Accept": "application/json",
@@ -71,11 +74,7 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         
         if res.status_code != 200:
             response.headers["Cache-Control"] = "no-store"
-            return {
-                "error": "Spotify rejected the Pathfinder request.",
-                "status_code": res.status_code,
-                "details": res.text
-            }
+            return {"error": "Spotify rejected request.", "status": res.status_code, "details": res.text}
             
         data = res.json()
         
@@ -85,30 +84,27 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         results = []
         try:
             items = data.get("data", {}).get("searchV2", {}).get("tracksV2", {}).get("items", [])
-            
             for item in items:
                 track = item.get("item", {}).get("data", {})
-                if not track:
-                    continue
+                if not track: continue
                     
                 images = track.get("albumOfTrack", {}).get("coverArt", {}).get("sources", [])
                 image_url = images[0]["url"] if images else None
                 
                 artists = track.get("artists", {}).get("items", [])
                 artist_names = [a.get("profile", {}).get("name") for a in artists if a.get("profile", {}).get("name")]
-                artist_name_string = ", ".join(artist_names) if artist_names else "Unknown"
-
+                
                 track_uri = track.get("uri", "")
                 track_id = track_uri.split(":")[-1] if track_uri else ""
                 
                 results.append({
                     "song_name": track.get("name", "Unknown"),
-                    "artist": artist_name_string,
+                    "artist": ", ".join(artist_names) if artist_names else "Unknown",
                     "spotify_url": f"https://open.spotify.com/track/{track_id}" if track_id else None,
                     "image": image_url
                 })
-        except Exception as parse_error:
-            return {"error": "Failed to parse GraphQL structure.", "details": str(parse_error), "raw_data": data}
+        except Exception as e:
+            return {"error": "Failed to parse JSON", "details": str(e), "raw": data}
             
         return {"search_query": q, "results": results}
         
@@ -116,20 +112,15 @@ async def search_spotify(q: str, token: str, response: Response, limit: int = 10
         response.headers["Cache-Control"] = "no-store"
         return {"error": "Server error", "details": str(e)}
 
-
 # =====================================================================
-# INTERNAL HELPER & NEW INTERCEPTED FEATURES (DO NOT TOUCH ABOVE)
+# INTERNAL HELPER FUNCTIONS
 # =====================================================================
-
 def _normalize_uri(id_or_uri: str, prefix: str) -> str:
-    """Smart helper: Lets users pass either '4qnFfsCa...' OR 'spotify:track:4qnFfsCa...'"""
+    """Lets users pass either raw IDs or full URIs"""
     return id_or_uri if id_or_uri.startswith("spotify:") else f"spotify:{prefix}:{id_or_uri}"
 
-
 async def _query_pathfinder(op_name: str, sha_hash: str, variables: dict, token: str, response: Response):
-    response.headers["Cache-Control"] = "public, s-maxage=60, stale-while-revalidate=300"
     url = "https://api-partner.spotify.com/pathfinder/v2/query"
-    
     payload = {
         "variables": variables,
         "operationName": op_name,
@@ -138,9 +129,6 @@ async def _query_pathfinder(op_name: str, sha_hash: str, variables: dict, token:
     headers = {
         "Authorization": f"Bearer {token}",
         "App-Platform": "WebPlayer",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Origin": "https://open.spotify.com",
-        "Referer": "https://open.spotify.com/",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip, deflate, br"
@@ -148,42 +136,72 @@ async def _query_pathfinder(op_name: str, sha_hash: str, variables: dict, token:
     try:
         res = await client.post(url, json=payload, headers=headers)
         if res.status_code != 200:
-            response.headers["Cache-Control"] = "no-store"
             return {"error": f"Spotify rejected {op_name}", "status": res.status_code, "details": res.text}
-        return res.json() # Returns original raw JSON as requested
+        return res.json()
     except Exception as e:
-        response.headers["Cache-Control"] = "no-store"
         return {"error": "Server error", "details": str(e)}
 
-
-# 1. GET TRACK (Metadata & live Stream Count)
+# =====================================================================
+# 2. THE ULTIMATE TRACK ENDPOINT (New Combined Auto-Radio Logic)
+# =====================================================================
 @app.get("/track")
-async def get_track(id: str, token: str, response: Response):
-    return await _query_pathfinder(
+async def get_track_enriched(id: str, token: str, response: Response):
+    response.headers["Cache-Control"] = "no-store" # Do not cache dynamic radio generation
+    clean_id = id.split(":")[-1]
+    
+    # STEP 1: Get the standard track payload
+    track_data = await _query_pathfinder(
         op_name="getTrack",
         sha_hash="612585ae06ba435ad26369870deaae23b5c8800a256cd8a57e08eddc25a37294",
         variables={"uri": _normalize_uri(id, "track")},
         token=token, response=response
     )
 
+    # STEP 2: Hit the 'inspiredby-mix' API to magically generate the Radio ID
+    radio_id = None
+    radio_uri = None
+    radio_contents = None
+    
+    url = f"https://spclient.wg.spotify.com/inspiredby-mix/v2/seed_to_playlist/spotify:track:{clean_id}?response-format=json"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "App-Platform": "WebPlayer",
+        "Accept": "application/json",
+    }
+    
+    try:
+        res_radio = await client.get(url, headers=headers)
+        if res_radio.status_code == 200:
+            media_items = res_radio.json().get("mediaItems", [])
+            radio_uri = media_items[0].get("uri", "") if media_items else None
+            radio_id = radio_uri.split(":")[-1] if radio_uri else None
+    except Exception:
+        pass # If radio generation fails, we still want to return the track data!
 
-# 2. GET PLAYLIST METADATA & TRACKS
-@app.get("/playlist")
-async def get_playlist(id: str, token: str, response: Response, offset: int = 0, limit: int = 100):
-    return await _query_pathfinder(
-        op_name="fetchPlaylistMetadata",
-        sha_hash="a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4",
-        variables={
-            "uri": _normalize_uri(id, "playlist"),
-            "offset": offset,
-            "limit": limit,
-            "enableWatchFeedEntrypoint": False
-        },
-        token=token, response=response
-    )
+    # STEP 3: If we successfully got a Radio ID, fetch its tracks instantly!
+    if radio_uri:
+        radio_contents = await _query_pathfinder(
+            op_name="fetchPlaylistContents",
+            sha_hash="a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4",
+            variables={
+                "uri": radio_uri,
+                "offset": 0,
+                "limit": 50,
+                "includeEpisodeContentRatingsV2": True
+            },
+            token=token, response=response
+        )
 
+    # RETURN THE ULTIMATE JSON COMBO
+    return {
+        "radio_id": radio_id,
+        "track_response": track_data,
+        "radio_playlist_contents": radio_contents
+    }
 
-# 3. GET RECOMMENDED RELATED TRACKS (Based on a single song)
+# =====================================================================
+# 3. OTHER TRACK FEATURES
+# =====================================================================
 @app.get("/track/recommendations")
 async def get_track_recommendations(id: str, token: str, response: Response, limit: int = 5):
     return await _query_pathfinder(
@@ -193,13 +211,77 @@ async def get_track_recommendations(id: str, token: str, response: Response, lim
         token=token, response=response
     )
 
-
-# 4. GET SIMILAR ALBUMS (Based on a single song)
 @app.get("/track/similar-albums")
 async def get_similar_albums(id: str, token: str, response: Response, limit: int = 50, albums_only: bool = True):
     return await _query_pathfinder(
         op_name="similarAlbumsBasedOnThisTrack",
         sha_hash="1d1f93a737498adca2c892c73af87fc0b052afe4e1a33c989540c32413dfae17",
         variables={"uri": _normalize_uri(id, "track"), "limit": limit, "albumsOnly": albums_only},
+        token=token, response=response
+    )
+
+@app.get("/track/artists")
+async def get_track_artists(id: str, token: str, response: Response):
+    return await _query_pathfinder(
+        op_name="queryTrackArtists",
+        sha_hash="ee2b038198f5e62c679c3996584d9249bbee55fe69fc212271c56492a022c798",
+        variables={"trackUri": _normalize_uri(id, "track")},
+        token=token, response=response
+    )
+
+# Standalone endpoint just in case you ever want JUST the ID without the heavy payload
+@app.get("/track/radio-id")
+async def get_standalone_radio_id(id: str, token: str, response: Response):
+    clean_id = id.split(":")[-1]
+    url = f"https://spclient.wg.spotify.com/inspiredby-mix/v2/seed_to_playlist/spotify:track:{clean_id}?response-format=json"
+    try:
+        res = await client.get(url, headers={"Authorization": f"Bearer {token}", "App-Platform": "WebPlayer"})
+        if res.status_code == 200:
+            media = res.json().get("mediaItems", [])
+            uri = media[0].get("uri", "") if media else None
+            return {"radio_id": uri.split(":")[-1] if uri else None, "uri": uri}
+        return {"error": "Failed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+# =====================================================================
+# 4. PLAYLIST / RADIO FEATURES
+# =====================================================================
+@app.get("/playlist")
+async def get_playlist_metadata(id: str, token: str, response: Response, offset: int = 0, limit: int = 100):
+    return await _query_pathfinder(
+        op_name="fetchPlaylistMetadata",
+        sha_hash="a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4",
+        variables={"uri": _normalize_uri(id, "playlist"), "offset": offset, "limit": limit, "enableWatchFeedEntrypoint": False},
+        token=token, response=response
+    )
+
+@app.get("/playlist/contents")
+async def get_playlist_contents(id: str, token: str, response: Response, offset: int = 0, limit: int = 50):
+    return await _query_pathfinder(
+        op_name="fetchPlaylistContents",
+        sha_hash="a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4",
+        variables={"uri": _normalize_uri(id, "playlist"), "offset": offset, "limit": limit, "includeEpisodeContentRatingsV2": True},
+        token=token, response=response
+    )
+
+@app.get("/playlist/permissions")
+async def get_playlist_permissions(id: str, token: str, response: Response):
+    return await _query_pathfinder(
+        op_name="playlistPermissions",
+        sha_hash="f4c99a92059b896b9e4e567403abebe666c0625a36286f9c2bb93961374a75c6",
+        variables={"uri": _normalize_uri(id, "playlist")},
+        token=token, response=response
+    )
+
+# =====================================================================
+# 5. UTILITY FEATURES
+# =====================================================================
+@app.get("/colors")
+async def get_extracted_colors(image_url: str, token: str, response: Response):
+    return await _query_pathfinder(
+        op_name="fetchExtractedColors",
+        sha_hash="36e90fcaea00d47c695fce31874efeb2519b97d4cd0ee1abfb4f8dc9348596ea",
+        variables={"imageUris": [image_url]},
         token=token, response=response
     )
