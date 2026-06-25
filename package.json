@@ -1,0 +1,8 @@
+{
+  "name": "spotify-hybrid-proxy",
+  "private": true,
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240222.0",
+    "typescript": "^5.3.3"
+  }
+}
